@@ -21,7 +21,7 @@ const COIN_PACKAGES = [
   { amount: 100, displayPrice: '$5.00 MXN' },
   { amount: 500, displayPrice: '$25.00 MXN' },
   { amount: 1000, displayPrice: '$50.00 MXN' },
-  { amount: 2000, displayPrice: '$100.00 MXN' },
+  { amount: 5000, displayPrice: '$250.00 MXN' },
   { amount: 10000, displayPrice: '$500.00 MXN' },
 ];
 
