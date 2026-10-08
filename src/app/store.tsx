@@ -18,9 +18,11 @@ import { addPurchasedCoins, loadCoinWallet } from '@/utils/coin-storage';
 const TEST_PURCHASE_CODE = '12345';
 
 const COIN_PACKAGES = [
-  { amount: 100, displayPrice: '$19 MXN' },
-  { amount: 500, displayPrice: '$69 MXN' },
-  { amount: 1000, displayPrice: '$119 MXN' },
+  { amount: 100, displayPrice: '$5.00 MXN' },
+  { amount: 500, displayPrice: '$25.00 MXN' },
+  { amount: 1000, displayPrice: '$50.00 MXN' },
+  { amount: 2000, displayPrice: '$100.00 MXN' },
+  { amount: 10000, displayPrice: '$500.00 MXN' },
 ];
 
 type CoinPackage = (typeof COIN_PACKAGES)[number];
@@ -116,7 +118,7 @@ export default function StoreScreen() {
           <View key={coinPackage.amount} style={styles.packageCard}>
             <Text style={styles.packageIcon}>🪙</Text>
             <Text style={styles.packageAmount}>{coinPackage.amount}</Text>
-            <Text style={styles.packageLabel}>monedas</Text>
+            <Text style={styles.packageLabel}>Monedas</Text>
             <Text style={styles.packagePrice}>{coinPackage.displayPrice}</Text>
             <Text style={styles.testLabel}>Compra de prueba con código</Text>
             <TouchableOpacity
