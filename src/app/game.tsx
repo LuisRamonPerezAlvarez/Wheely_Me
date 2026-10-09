@@ -32,6 +32,7 @@ const COIN_SPACING = 180;
 const COIN_OFFSET = 120;
 const COIN_SIZE = 30;
 const COIN_COLLISION_DISTANCE = 69;
+const COIN_VERTICAL_COLLISION_DISTANCE = 54;
 const COIN_RENDER_MARGIN = 80;
 const CONTINUE_PHYSICS_DELAY_MS = 750;
 const MAGNET_RADIUS = 165;
@@ -177,6 +178,34 @@ function getCarContactHeight(worldX: number) {
     + getTerrainHeight(worldX + CAR_WHEEL_HALF_SPAN)
   ) / 2;
   return Math.max(centerHeight, wheelAverageHeight) + CAR_TERRAIN_CLEARANCE;
+}
+
+function isCoinWithinCarPath(
+  previousCarX: number,
+  previousCarBottom: number,
+  nextCarX: number,
+  nextCarBottom: number,
+  coinWorldX: number,
+  coinBottom: number
+) {
+  const coinCenterY = coinBottom + COIN_SIZE / 2;
+  const carCenterOffset = CAR_HEIGHT / 2;
+  const startX = (previousCarX - coinWorldX) / COIN_COLLISION_DISTANCE;
+  const startY = (previousCarBottom + carCenterOffset - coinCenterY)
+    / COIN_VERTICAL_COLLISION_DISTANCE;
+  const endX = (nextCarX - coinWorldX) / COIN_COLLISION_DISTANCE;
+  const endY = (nextCarBottom + carCenterOffset - coinCenterY)
+    / COIN_VERTICAL_COLLISION_DISTANCE;
+  const pathX = endX - startX;
+  const pathY = endY - startY;
+  const pathLengthSquared = pathX * pathX + pathY * pathY;
+  const closestPointRatio = pathLengthSquared === 0
+    ? 0
+    : Math.max(0, Math.min(1, -(startX * pathX + startY * pathY) / pathLengthSquared));
+  const closestX = startX + pathX * closestPointRatio;
+  const closestY = startY + pathY * closestPointRatio;
+
+  return closestX * closestX + closestY * closestY <= 1;
 }
 
 function saveCoinRun(coinCount: number, collectedCoinIds: Set<number>) {
@@ -495,6 +524,7 @@ export default function WheelyMeGame() {
       const shouldStraighten = brakeHasStopped || hasSettled;
 
       const previousCarX = carXRef.current;
+      const previousCarBottom = carBottomRef.current;
       const nextCarX = previousCarX + velocityX.current * dt;
       const previousGroundHeight = getCarContactHeight(previousCarX);
       const nextGroundHeight = getCarContactHeight(nextCarX);
@@ -624,10 +654,14 @@ export default function WheelyMeGame() {
             }
           }
 
-          const touchedByCar = coinWorldX >= (
-            Math.min(previousCarX, nextCarX) - COIN_COLLISION_DISTANCE
-          ) && coinWorldX <= (
-            Math.max(previousCarX, nextCarX) + COIN_COLLISION_DISTANCE
+          const coinBottom = getTerrainHeight(coinWorldX) + 18;
+          const touchedByCar = isCoinWithinCarPath(
+            previousCarX,
+            previousCarBottom,
+            nextCarX,
+            carBottomRef.current,
+            coinWorldX,
+            coinBottom
           );
 
           if (touchedByCar) {
@@ -1156,6 +1190,7 @@ export default function WheelyMeGame() {
       <CompassHud
         top={Math.max(insets.top, 15) + 44}
         left={Math.max(insets.left, 20)}
+        active={!paused}
       />
 
       {/* Indicadores de sensores adaptados para que no estorben */}

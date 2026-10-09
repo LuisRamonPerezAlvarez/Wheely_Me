@@ -14,6 +14,8 @@ import { loadCoinWallet } from '@/utils/coin-storage';
 const wait = (milliseconds: number) =>
   new Promise<void>(resolve => setTimeout(resolve, milliseconds));
 
+const isStripeTestMode = process.env.EXPO_PUBLIC_STRIPE_TEST_MODE === 'true';
+
 export default function StoreScreen() {
   const insets = useSafeAreaInsets();
   const { revision: cloudRevision, syncNow } = useCloudSync();
@@ -44,7 +46,7 @@ export default function StoreScreen() {
   );
 
   const handlePurchase = async (product: StripeTestProduct) => {
-    if (processingProductId) return;
+    if (processingProductId || !isStripeTestMode) return;
 
     const balanceBeforeCheckout = coinCount;
     setProcessingProductId(product.id);
@@ -99,10 +101,21 @@ export default function StoreScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
+      <View style={styles.modeNotice}>
+        <Text style={styles.modeNoticeTitle}>
+          {isStripeTestMode ? 'MODO DE PRUEBA' : 'COMPRAS NO DISPONIBLES'}
+        </Text>
+        <Text style={styles.modeNoticeText}>
+          {isStripeTestMode
+            ? 'Checkout de Stripe de prueba: no uses una tarjeta real.'
+            : 'La venta de monedas requiere integrar Google Play Billing antes de publicar.'}
+        </Text>
+      </View>
+
       <View style={styles.packagesRow}>
         {STRIPE_TEST_PRODUCTS.map(product => {
           const isProcessing = processingProductId === product.id;
-          const purchasesDisabled = processingProductId !== null;
+          const purchasesDisabled = processingProductId !== null || !isStripeTestMode;
 
           return (
             <View key={product.id} style={styles.packageCard}>
@@ -120,7 +133,7 @@ export default function StoreScreen() {
                 activeOpacity={0.75}
               >
                 <Text style={styles.buyButtonText}>
-                  {isProcessing ? 'PROCESANDO...' : 'COMPRAR'}
+                  {isProcessing ? 'PROCESANDO...' : isStripeTestMode ? 'PROBAR COMPRA' : 'NO DISPONIBLE'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -172,6 +185,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
     paddingVertical: 12,
+  },
+  modeNotice: {
+    alignSelf: 'center',
+    maxWidth: 600,
+    marginTop: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,213,79,0.45)',
+    backgroundColor: 'rgba(255,213,79,0.08)',
+  },
+  modeNoticeTitle: {
+    color: '#FFD54F',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  modeNoticeText: {
+    marginTop: 3,
+    color: '#DCE6FF',
+    fontSize: 11,
+    textAlign: 'center',
   },
   packageCard: {
     flex: 1,

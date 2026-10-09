@@ -182,6 +182,16 @@ export type Database = {
         Args: { p_operation_id: string; p_amount: number; p_kind: string };
         Returns: number;
       };
+      daily_reward: {
+        Args: { p_claim?: boolean };
+        Returns: {
+          claimed: boolean;
+          available: boolean;
+          next_claim_at: string | null;
+          reward_amount: number;
+          coin_balance: number;
+        }[];
+      };
       submit_high_score: {
         Args: { p_high_score: number };
         Returns: number;

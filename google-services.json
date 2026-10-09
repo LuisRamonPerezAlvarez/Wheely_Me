@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "666798765149",
+    "project_id": "wheely-me",
+    "storage_bucket": "wheely-me.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666798765149:android:46da04c77983104aea09b4",
+        "android_client_info": {
+          "package_name": "com.araly.wheelyme"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA9cRcOcCR94t56SOkPlATzX36Agi37r0E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

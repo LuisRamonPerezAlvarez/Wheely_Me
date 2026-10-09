@@ -1,4 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -6,28 +7,46 @@ import {
   Platform,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCloudSync } from '@/components/cloud-sync-provider';
-import { getSupabaseClient } from '@/lib/supabase';
+import { AUTH_REDIRECT_URL, completeAuthFromUrl, getSupabaseClient } from '@/lib/supabase';
 
 type AccountMode = 'overview' | 'link' | 'restore';
 
-function getFriendlyError(message: string) {
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = error.message;
+    if (typeof message === 'string') return message;
+  }
+  return '';
+}
+
+function getFriendlyGoogleError(message: string, action: 'link' | 'restore') {
   const normalized = message.toLowerCase();
-  if (normalized.includes('already') || normalized.includes('registered')) {
-    return 'Ese correo ya tiene una cuenta. Usa “Recuperar cuenta”.';
+  if (normalized.includes('manual linking')) {
+    return 'La vinculación de identidades está desactivada en Supabase. Activa “Enable Manual Linking”.';
   }
-  if (normalized.includes('rate limit')) return 'Espera un momento antes de solicitar otro código.';
-  if (normalized.includes('invalid') && normalized.includes('token')) {
-    return 'El código no es válido o ya venció.';
+  if (normalized.includes('provider is not enabled') || normalized.includes('google is not enabled')) {
+    return 'Google no está habilitado como proveedor en Supabase Auth.';
   }
-  if (normalized.includes('expired')) return 'El código venció. Solicita uno nuevo.';
-  return 'No fue posible completar la operación. Revisa tu conexión e intenta nuevamente.';
+  if (normalized.includes('identity') && normalized.includes('already')) {
+    return 'Ese Google ya está vinculado a otra cuenta de Wheely Me. Usa “Recuperar con Google”.';
+  }
+  if (
+    normalized.includes('fetch failed')
+    || normalized.includes('network request failed')
+    || normalized.includes('failed to fetch')
+    || normalized.includes('networkerror')
+  ) {
+    return 'No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.';
+  }
+  if (message) return `No se pudo ${action === 'link' ? 'vincular' : 'iniciar sesión con'} Google: ${message}`;
+  return `No se pudo ${action === 'link' ? 'vincular' : 'iniciar sesión con'} Google. Inténtalo de nuevo.`;
 }
 
 export default function AccountScreen() {
@@ -36,9 +55,6 @@ export default function AccountScreen() {
   const [mode, setMode] = useState<AccountMode>('overview');
   const [isAnonymous, setIsAnonymous] = useState(true);
   const [currentEmail, setCurrentEmail] = useState<string | null>(null);
-  const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -62,70 +78,54 @@ export default function AccountScreen() {
 
   const resetForm = (nextMode: AccountMode) => {
     setMode(nextMode);
-    setEmail('');
-    setCode('');
-    setCodeSent(false);
     setMessage('');
   };
 
-  const handleSendCode = async () => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
-      setMessage('Ingresa un correo electrónico válido.');
-      return;
-    }
+  const handleGoogleAuth = async (action: 'link' | 'restore') => {
+    if (isLoading) return;
 
     setIsLoading(true);
     setMessage('');
     try {
       const client = getSupabaseClient();
-      const result = mode === 'link'
-        ? await client.auth.updateUser({ email: normalizedEmail })
-        : await client.auth.signInWithOtp({
-            email: normalizedEmail,
-            options: { shouldCreateUser: false },
+      const authResult = action === 'link'
+        ? await client.auth.linkIdentity({
+            provider: 'google',
+            options: { redirectTo: AUTH_REDIRECT_URL, skipBrowserRedirect: true },
+          })
+        : await client.auth.signInWithOAuth({
+            provider: 'google',
+            options: { redirectTo: AUTH_REDIRECT_URL, skipBrowserRedirect: true },
           });
-      if (result.error) throw result.error;
+      if (authResult.error) throw authResult.error;
+      if (!authResult.data.url) throw new Error('Supabase no devolvió la URL de Google.');
 
-      setEmail(normalizedEmail);
-      setCodeSent(true);
-      setMessage(`Enviamos un código de 6 dígitos a ${normalizedEmail}. Revisa también spam.`);
-    } catch (error) {
-      setMessage(getFriendlyError(error instanceof Error ? error.message : ''));
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      const browserResult = await WebBrowser.openAuthSessionAsync(
+        authResult.data.url,
+        AUTH_REDIRECT_URL
+      );
+      if (browserResult.type !== 'success') {
+        setMessage('Inicio con Google cancelado.');
+        return;
+      }
 
-  const handleVerifyCode = async () => {
-    if (!/^\d{6}$/.test(code.trim())) {
-      setMessage('Ingresa el código de 6 dígitos.');
-      return;
-    }
-
-    setIsLoading(true);
-    setMessage('');
-    try {
-      const client = getSupabaseClient();
-      const { error } = await client.auth.verifyOtp({
-        email,
-        token: code.trim(),
-        type: mode === 'link' ? 'email_change' : 'email',
-      });
-      if (error) throw error;
+      const completed = await completeAuthFromUrl(browserResult.url);
+      if (!completed) {
+        throw new Error('Google no devolvió una sesión válida. Revisa la URL de retorno en Supabase.');
+      }
 
       await syncNow();
       await loadAccount();
-      setMode('overview');
-      setCode('');
-      setCodeSent(false);
+      if (action === 'restore') setMode('overview');
       setMessage(
-        mode === 'link'
-          ? 'Tu progreso quedó protegido con este correo.'
-          : 'Cuenta recuperada y progreso sincronizado.'
+        action === 'link'
+          ? 'Google quedó vinculado. Tu progreso se conserva en esta cuenta.'
+          : 'Sesión recuperada con Google. Wheely Me sincronizará tu progreso desde la nube.'
       );
     } catch (error) {
-      setMessage(getFriendlyError(error instanceof Error ? error.message : ''));
+      const errorMessage = getErrorMessage(error);
+      console.error(`No se pudo ${action === 'link' ? 'vincular' : 'recuperar'} con Google:`, error);
+      setMessage(getFriendlyGoogleError(errorMessage, action));
     } finally {
       setIsLoading(false);
     }
@@ -161,7 +161,7 @@ export default function AccountScreen() {
               </Text>
               <Text style={styles.description}>
                 {isAnonymous
-                  ? 'Vincula un correo para recuperar tus monedas y récord si cambias de teléfono.'
+                  ? 'Vincula Google para recuperar tus monedas y récord si cambias de teléfono.'
                   : `Cuenta vinculada${currentEmail ? ` a ${currentEmail}` : ''}.`}
               </Text>
               <Text style={styles.cloudStatus}>
@@ -177,6 +177,7 @@ export default function AccountScreen() {
                 <TouchableOpacity
                   style={[styles.actionButton, styles.primaryButton]}
                   onPress={() => resetForm('link')}
+                  disabled={isLoading}
                 >
                   <Text style={styles.actionButtonText}>GUARDAR MI PROGRESO</Text>
                 </TouchableOpacity>
@@ -185,6 +186,7 @@ export default function AccountScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.secondaryButton]}
                 onPress={() => resetForm('restore')}
+                disabled={isLoading}
               >
                 <Text style={styles.actionButtonText}>RECUPERAR OTRA CUENTA</Text>
               </TouchableOpacity>
@@ -196,65 +198,37 @@ export default function AccountScreen() {
               </Text>
               <Text style={styles.description}>
                 {mode === 'link'
-                  ? 'El mismo jugador conservará sus monedas y récord.'
-                  : 'Enviaremos un código de 6 dígitos al correo de la cuenta existente.'}
+                  ? 'Vincula Google a esta cuenta para conservar tu progreso y recuperarlo en otros dispositivos.'
+                  : 'Inicia sesión con Google para recuperar el progreso asociado a tu cuenta.'}
               </Text>
 
-              <TextInput
-                style={styles.input}
-                value={email}
-                onChangeText={value => {
-                  setEmail(value);
-                  setMessage('');
-                }}
-                editable={!codeSent && !isLoading}
-                placeholder="correo@ejemplo.com"
-                placeholderTextColor="rgba(255,255,255,0.35)"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-              />
-
-              {codeSent && (
-                <TextInput
-                  style={[styles.input, styles.codeInput]}
-                  value={code}
-                  onChangeText={value => {
-                    setCode(value.replace(/\D/g, '').slice(0, 6));
-                    setMessage('');
-                  }}
-                  placeholder="000000"
-                  placeholderTextColor="rgba(255,255,255,0.35)"
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  autoFocus
-                />
-              )}
-
-              {message !== '' && <Text style={styles.message}>{message}</Text>}
-
-              <View style={styles.formActions}>
+              {Platform.OS !== 'web' ? (
                 <TouchableOpacity
-                  style={[styles.actionButton, styles.cancelButton]}
-                  onPress={() => resetForm('overview')}
-                  disabled={isLoading}
-                >
-                  <Text style={styles.actionButtonText}>CANCELAR</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.primaryButton, isLoading && styles.disabled]}
-                  onPress={codeSent ? handleVerifyCode : handleSendCode}
+                  style={[styles.actionButton, styles.googleButton, isLoading && styles.disabled]}
+                  onPress={() => void handleGoogleAuth(mode)}
                   disabled={isLoading}
                 >
                   {isLoading ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.actionButtonText}>
-                      {codeSent ? 'VERIFICAR CÓDIGO' : 'ENVIAR CÓDIGO'}
+                      {mode === 'link' ? 'VINCULAR PROGRESO CON GOOGLE' : 'CONTINUAR CON GOOGLE'}
                     </Text>
                   )}
                 </TouchableOpacity>
-              </View>
+              ) : (
+                <Text style={styles.message}>La cuenta con Google se configura desde la app móvil.</Text>
+              )}
+
+              {message !== '' && <Text style={styles.message}>{message}</Text>}
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.cancelButton]}
+                onPress={() => resetForm('overview')}
+                disabled={isLoading}
+              >
+                <Text style={styles.actionButtonText}>CANCELAR</Text>
+              </TouchableOpacity>
             </>
           )}
 
@@ -329,38 +303,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  input: {
-    width: '100%',
-    maxWidth: 390,
-    height: 48,
-    marginTop: 16,
-    paddingHorizontal: 16,
-    color: '#fff',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#64B5F6',
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.28)',
-  },
-  codeInput: {
-    maxWidth: 220,
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 8,
-    textAlign: 'center',
-  },
   message: {
     marginTop: 12,
     color: '#FFCC80',
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  formActions: {
-    marginTop: 16,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 12,
   },
   actionButton: {
     minWidth: 190,
@@ -376,6 +324,9 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     backgroundColor: '#208AEF',
+  },
+  googleButton: {
+    backgroundColor: '#DB4437',
   },
   cancelButton: {
     backgroundColor: '#5F6368',

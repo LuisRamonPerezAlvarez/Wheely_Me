@@ -4,6 +4,7 @@ import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 
 export const COIN_STORAGE_KEY = 'currentRunCoins';
 const PENDING_WALLET_OPERATIONS_KEY = 'pendingWalletOperations';
+export const DAILY_REWARD_AMOUNT = 50;
 
 export type WalletOperationKind =
   | 'game_reward'
@@ -61,10 +62,77 @@ export type CoinWallet = {
   collectedCoinIds: number[];
 };
 
+export type DailyRewardState = {
+  available: boolean;
+  nextClaimAt: string | null;
+  rewardAmount: number;
+};
+
 const EMPTY_WALLET: CoinWallet = {
   coinCount: 0,
   collectedCoinIds: [],
 };
+
+export async function loadDailyRewardState(): Promise<DailyRewardState> {
+  const { data, error } = await getSupabaseClient().rpc('daily_reward', { p_claim: false });
+  if (error) throw error;
+
+  const state = data[0];
+  if (!state) throw new Error('Supabase no devolvió el estado de la recompensa diaria.');
+
+  return {
+    available: state.available,
+    nextClaimAt: state.next_claim_at,
+    rewardAmount: state.reward_amount,
+  };
+}
+
+export function getDailyRewardCountdown(nextClaimAt: string | null) {
+  if (!nextClaimAt) {
+    return { hours: 0, minutes: 0, seconds: 0, text: 'Disponible ahora' };
+  }
+
+  const remainingMs = Math.max(0, new Date(nextClaimAt).getTime() - Date.now());
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return {
+    hours,
+    minutes,
+    seconds,
+    text: `${hours.toString().padStart(2, '0')}:${minutes
+      .toString()
+      .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+  };
+}
+
+export async function claimDailyReward() {
+  const { data, error } = await getSupabaseClient().rpc('daily_reward', { p_claim: true });
+  if (error) throw error;
+
+  const result = data[0];
+  if (!result) throw new Error('Supabase no devolvió el resultado de la recompensa diaria.');
+  if (!result.claimed) {
+    return {
+      claimed: false,
+      amount: 0,
+      reason: 'Todavía no puedes reclamar la recompensa diaria.',
+      coinBalance: result.coin_balance,
+    };
+  }
+
+  const wallet = await loadCoinWallet();
+  await saveCoinWallet(result.coin_balance, wallet.collectedCoinIds);
+
+  return {
+    claimed: true,
+    amount: result.reward_amount,
+    reason: `Recompensa diaria de ${result.reward_amount} monedas reclamada.`,
+    coinBalance: result.coin_balance,
+  };
+}
 
 export async function loadCoinWallet(): Promise<CoinWallet> {
   try {

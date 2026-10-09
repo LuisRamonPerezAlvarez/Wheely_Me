@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,7 +10,12 @@ import { useCloudSync } from '@/components/cloud-sync-provider';
 import { INVERTED_VIEW_STYLE, useLightInversion } from '@/components/light-inversion-provider';
 import { enableRewardNotifications } from '@/lib/local-notifications';
 import { registerCurrentDeviceForPushNotifications } from '@/lib/push-notifications';
-import { loadCoinWallet } from '@/utils/coin-storage';
+import {
+  claimDailyReward,
+  getDailyRewardCountdown,
+  loadCoinWallet,
+  loadDailyRewardState,
+} from '@/utils/coin-storage';
 import { loadPlayerPhotoUri, savePlayerPhoto } from '@/utils/player-photo';
 
 export default function MainMenuScreen() {
@@ -26,6 +31,31 @@ export default function MainMenuScreen() {
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
   const [isSavingPhoto, setIsSavingPhoto] = useState(false);
   const [isEnablingReminders, setIsEnablingReminders] = useState(false);
+  const [dailyRewardState, setDailyRewardState] = useState({
+    available: false,
+    nextClaimAt: null as string | null,
+    rewardAmount: 50,
+  });
+  const [dailyRewardCountdownText, setDailyRewardCountdownText] = useState('Disponible ahora');
+  const [dailyRewardError, setDailyRewardError] = useState('');
+  const [isDailyRewardLoading, setIsDailyRewardLoading] = useState(true);
+  const [isClaimingDailyReward, setIsClaimingDailyReward] = useState(false);
+  const isRefreshingRewardRef = useRef(false);
+
+  const refreshDailyReward = useCallback(async () => {
+    setIsDailyRewardLoading(true);
+    setDailyRewardError('');
+    try {
+      const reward = await loadDailyRewardState();
+      setDailyRewardState(reward);
+    } catch (error) {
+      console.error('No se pudo consultar la recompensa diaria:', error);
+      setDailyRewardError('No pudimos consultar la recompensa. Revisa tu conexión e inténtalo de nuevo.');
+      throw error;
+    } finally {
+      setIsDailyRewardLoading(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -38,12 +68,38 @@ export default function MainMenuScreen() {
       loadPlayerPhotoUri().then(uri => {
         if (isActive) setPlayerPhotoUri(uri);
       });
+      void refreshDailyReward().catch(() => {});
 
       return () => {
         isActive = false;
       };
-    }, [cloudRevision])
+    }, [cloudRevision, refreshDailyReward])
   );
+
+  useEffect(() => {
+    if (dailyRewardState.available || !dailyRewardState.nextClaimAt) return;
+
+    const updateCountdown = () => {
+      const countdown = getDailyRewardCountdown(dailyRewardState.nextClaimAt);
+      setDailyRewardCountdownText(countdown.text);
+
+      if (countdown.hours === 0 && countdown.minutes === 0 && countdown.seconds === 0) {
+        if (isRefreshingRewardRef.current) return;
+        isRefreshingRewardRef.current = true;
+        void refreshDailyReward().finally(() => {
+          isRefreshingRewardRef.current = false;
+        }).catch(() => {});
+      }
+    };
+
+    const initialTimer = setTimeout(updateCountdown, 0);
+    const intervalTimer = setInterval(updateCountdown, 1000);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [dailyRewardState.available, dailyRewardState.nextClaimAt, refreshDailyReward]);
 
   useEffect(() => {
     let isMounted = true;
@@ -106,6 +162,31 @@ export default function MainMenuScreen() {
       setIsAuthenticating(false);
     }
   }, [biometricEnrolled, hardwareAvailable, isAuthenticating]);
+
+  const handleClaimDailyReward = useCallback(async () => {
+    if (isClaimingDailyReward || !dailyRewardState.available) return;
+
+    setIsClaimingDailyReward(true);
+    setStatusMessage('');
+
+    try {
+      const result = await claimDailyReward();
+      if (!result.claimed) {
+        setCoinCount(result.coinBalance);
+        await refreshDailyReward();
+        setStatusMessage(result.reason);
+        return;
+      }
+
+      setCoinCount(result.coinBalance);
+      await refreshDailyReward();
+      setStatusMessage(`¡Recompensa diaria desbloqueada! +${result.amount} monedas.`);
+    } catch {
+      setStatusMessage('No pudimos reclamar la recompensa diaria. Inténtalo de nuevo.');
+    } finally {
+      setIsClaimingDailyReward(false);
+    }
+  }, [dailyRewardState.available, isClaimingDailyReward, refreshDailyReward]);
 
   const handleTakePhoto = async () => {
     try {
@@ -222,6 +303,59 @@ export default function MainMenuScreen() {
           <Text style={styles.coinIcon}>🪙</Text>
           <Text style={styles.coinText}>Monedas: {coinCount}</Text>
         </View>
+      </View>
+
+      <View style={styles.dailyRewardCard}>
+        <View style={styles.dailyRewardHeader}>
+          <Text style={styles.dailyRewardTitle}>🎁 RECOMPENSA DIARIA</Text>
+          <Text style={styles.dailyRewardBadge}>
+            {dailyRewardState.available ? 'LISTA' : 'EN ESPERA'}
+          </Text>
+        </View>
+
+        <Text style={styles.dailyRewardText}>
+          {isDailyRewardLoading
+            ? 'Consultando recompensa segura...'
+            : dailyRewardError
+              ? dailyRewardError
+              : dailyRewardState.available
+                ? `Disponible ahora: +${dailyRewardState.rewardAmount} monedas`
+                : `Próxima recompensa en ${dailyRewardCountdownText}`}
+        </Text>
+
+        {dailyRewardError ? (
+          <TouchableOpacity
+            style={styles.dailyRewardButton}
+            onPress={() => void refreshDailyReward().catch(() => {})}
+            disabled={isDailyRewardLoading}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.dailyRewardButtonText}>
+              {isDailyRewardLoading ? 'CONSULTANDO...' : 'REINTENTAR'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[
+              styles.dailyRewardButton,
+              (!dailyRewardState.available || isClaimingDailyReward || isDailyRewardLoading)
+                && styles.buttonDisabled,
+            ]}
+            onPress={() => void handleClaimDailyReward()}
+            disabled={!dailyRewardState.available || isClaimingDailyReward || isDailyRewardLoading}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.dailyRewardButtonText}>
+              {isDailyRewardLoading
+                ? 'CONSULTANDO...'
+                : isClaimingDailyReward
+                  ? 'RECLAMANDO...'
+                  : dailyRewardState.available
+                    ? `RECLAMAR ${dailyRewardState.rewardAmount}`
+                    : 'ESPERA'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.menuSection}>
@@ -425,6 +559,53 @@ const styles = StyleSheet.create({
     color: '#FFD54F',
     fontSize: 18,
     fontWeight: '800',
+  },
+  dailyRewardCard: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 213, 79, 0.45)',
+    backgroundColor: 'rgba(10, 22, 44, 0.9)',
+  },
+  dailyRewardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dailyRewardTitle: {
+    color: '#FFF7D6',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+  },
+  dailyRewardBadge: {
+    color: '#FFD54F',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  dailyRewardText: {
+    marginTop: 8,
+    color: '#E8EEF9',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dailyRewardButton: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFB300',
+  },
+  dailyRewardButtonText: {
+    color: '#1D2333',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   menuSection: {
     flex: 1,
