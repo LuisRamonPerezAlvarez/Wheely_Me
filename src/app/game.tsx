@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { Accelerometer, LightSensor } from 'expo-sensors';
@@ -7,8 +6,9 @@ import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, useWindowDi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CompassHud } from '@/components/compass-hud';
-import { loadCoinWallet, saveCoinWallet } from '@/utils/coin-storage';
+import { loadCoinWallet, queueWalletOperation, saveCoinWallet } from '@/utils/coin-storage';
 import { loadPlayerPhotoUri } from '@/utils/player-photo';
+import { loadHighScore, saveHighScore } from '@/utils/progress-storage';
 
 // Ancho máximo estimado para generar estrellas uniformemente sin depender del ancho inicial de la pantalla
 const MAX_BG_WIDTH = 2000;
@@ -275,9 +275,7 @@ export default function WheelyMeGame() {
 
   // Cargar récord y las monedas de la partida actual al iniciar
   useEffect(() => {
-    AsyncStorage.getItem('highScore').then(value => {
-      if (value !== null) setHighScore(parseInt(value, 10));
-    });
+    loadHighScore().then(setHighScore);
 
     loadCoinWallet()
       .then(wallet => {
@@ -375,7 +373,7 @@ export default function WheelyMeGame() {
           const finalScore = Math.floor(scoreRef.current);
           setHighScore(previousHighScore => {
             if (finalScore > previousHighScore) {
-              void AsyncStorage.setItem('highScore', String(finalScore));
+              void saveHighScore(finalScore);
               return finalScore;
             }
             return previousHighScore;
@@ -650,6 +648,7 @@ export default function WheelyMeGame() {
           setCoinCount(nextCoinCount);
           setCollectedCoinIds(new Set(collectedCoinIdsRef.current));
           saveCoinRun(nextCoinCount, collectedCoinIdsRef.current);
+          void queueWalletOperation(newlyCollected.length, 'game_reward');
         }
       }
 
@@ -687,7 +686,7 @@ export default function WheelyMeGame() {
             const finalScore = Math.floor(currentScore);
             setHighScore(prevHigh => {
               if (finalScore > prevHigh) {
-                AsyncStorage.setItem('highScore', String(finalScore));
+                void saveHighScore(finalScore);
                 return finalScore;
               }
               return prevHigh;
@@ -769,6 +768,7 @@ export default function WheelyMeGame() {
     setSelectedPowerUps(current => ({ ...current, [powerUpId]: true }));
     setPurchaseMessage(`${powerUp.name} preparado para la siguiente partida`);
     saveCoinRun(remainingCoins, collectedCoinIdsRef.current);
+    void queueWalletOperation(-powerUp.price, 'power_up');
   };
 
   const handleStartGame = () => {
@@ -798,6 +798,7 @@ export default function WheelyMeGame() {
       coinCountRef.current = remainingCoins;
       setCoinCount(remainingCoins);
       saveCoinRun(remainingCoins, collectedCoinIdsRef.current);
+      void queueWalletOperation(refundAmount, 'refund');
     }
 
     setSelectedPowerUps({ ...EMPTY_POWER_UPS });
@@ -825,6 +826,7 @@ export default function WheelyMeGame() {
     coinCountRef.current = remainingCoins;
     setCoinCount(remainingCoins);
     saveCoinRun(remainingCoins, collectedCoinIdsRef.current);
+    void queueWalletOperation(-CONTINUE_COST, 'continue');
 
     // Conservamos posición y progreso, pero estabilizamos la física antes de
     // reactivar el loop para evitar otro Game Over inmediato.

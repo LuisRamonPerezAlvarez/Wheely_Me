@@ -1,18 +1,22 @@
-import * as LocalAuthentication from 'expo-local-authentication';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useCloudSync } from '@/components/cloud-sync-provider';
+import { INVERTED_VIEW_STYLE, useLightInversion } from '@/components/light-inversion-provider';
+import { enableRewardNotifications } from '@/lib/local-notifications';
+import { registerCurrentDeviceForPushNotifications } from '@/lib/push-notifications';
 import { loadCoinWallet } from '@/utils/coin-storage';
 import { loadPlayerPhotoUri, savePlayerPhoto } from '@/utils/player-photo';
-import { INVERTED_VIEW_STYLE, useLightInversion } from '@/components/light-inversion-provider';
 
 export default function MainMenuScreen() {
   const insets = useSafeAreaInsets();
   const isColorInverted = useLightInversion();
+  const { revision: cloudRevision, syncNow } = useCloudSync();
   const [coinCount, setCoinCount] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -21,9 +25,11 @@ export default function MainMenuScreen() {
   const [playerPhotoUri, setPlayerPhotoUri] = useState<string | null>(null);
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
   const [isSavingPhoto, setIsSavingPhoto] = useState(false);
+  const [isEnablingReminders, setIsEnablingReminders] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
+      void cloudRevision;
       let isActive = true;
 
       loadCoinWallet().then(wallet => {
@@ -36,7 +42,7 @@ export default function MainMenuScreen() {
       return () => {
         isActive = false;
       };
-    }, [])
+    }, [cloudRevision])
   );
 
   useEffect(() => {
@@ -144,6 +150,37 @@ export default function MainMenuScreen() {
     }
   };
 
+  const handleEnableReminders = async () => {
+    if (isEnablingReminders) return;
+
+    setIsEnablingReminders(true);
+    setStatusMessage('');
+    try {
+      const scheduled = await enableRewardNotifications();
+      let pushRegistered = false;
+      if (scheduled) {
+        await syncNow();
+        try {
+          pushRegistered = await registerCurrentDeviceForPushNotifications();
+        } catch (error) {
+          console.warn('No se pudo registrar el token push:', error);
+        }
+      }
+      setStatusMessage(
+        scheduled
+          ? pushRegistered
+            ? 'Recordatorios y avisos de compras activados.'
+            : 'Recordatorio diario activo. Las push requieren configurar APK y Supabase.'
+          : 'Activa las notificaciones desde los ajustes de Android.'
+      );
+    } catch (error) {
+      console.error('No se pudo programar la notificación local:', error);
+      setStatusMessage('No pudimos activar los recordatorios. Inténtalo nuevamente.');
+    } finally {
+      setIsEnablingReminders(false);
+    }
+  };
+
   return (
     <View
       style={[
@@ -205,6 +242,25 @@ export default function MainMenuScreen() {
           activeOpacity={0.75}
         >
           <Text style={styles.menuButtonText}>TIENDA</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.menuButton, styles.accountButton]}
+          onPress={() => router.push('/account')}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.menuButtonText}>CUENTA</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.remindersButton, isEnablingReminders && styles.buttonDisabled]}
+          onPress={handleEnableReminders}
+          disabled={isEnablingReminders}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.remindersButtonText}>
+            {isEnablingReminders ? 'ACTIVANDO...' : '🔔  ACTIVAR RECORDATORIOS'}
+          </Text>
         </TouchableOpacity>
 
         {statusMessage !== '' && (
@@ -390,6 +446,9 @@ const styles = StyleSheet.create({
   storeButton: {
     backgroundColor: '#208AEF',
   },
+  accountButton: {
+    backgroundColor: '#7E57C2',
+  },
   buttonDisabled: {
     opacity: 0.6,
   },
@@ -407,6 +466,22 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
     fontWeight: '600',
+  },
+  remindersButton: {
+    minHeight: 50,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,213,79,0.6)',
+    backgroundColor: 'rgba(8,18,42,0.86)',
+  },
+  remindersButtonText: {
+    color: '#FFD54F',
+    fontSize: 13,
+    fontWeight: '800',
   },
   photoModalBackdrop: {
     flex: 1,
