@@ -7,7 +7,7 @@ type CompassHudProps = {
   top: number;
 };
 
-const LANDSCAPE_HEADING_OFFSET = -90;
+const LANDSCAPE_HEADING_OFFSET = 0;
 const UPDATE_INTERVAL_MS = 32;
 const SMOOTHING_FACTOR = 0.3;
 
@@ -46,7 +46,7 @@ export function CompassHud({ left, top }: CompassHudProps) {
           // Convertimos el vector norte en rumbo y compensamos el HUD horizontal.
           const magneticNorthAngle = Math.atan2(y, x) * (180 / Math.PI);
           const rawHeading = normalizeDegrees(
-            90 - magneticNorthAngle + LANDSCAPE_HEADING_OFFSET
+            magneticNorthAngle + LANDSCAPE_HEADING_OFFSET
           );
           
           const normCurrent = normalizeDegrees(headingRef.current);
