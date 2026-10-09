@@ -8,9 +8,9 @@ type CompassHudProps = {
   active: boolean;
 };
 
-const LANDSCAPE_HEADING_OFFSET = 90;
-const UPDATE_INTERVAL_MS = 100;
-const SMOOTHING_FACTOR = 0.25;
+const LANDSCAPE_HEADING_OFFSET = 0;
+const UPDATE_INTERVAL_MS = 32;
+const SMOOTHING_FACTOR = 0.3;
 const DIAL_SIZE = 84;
 const DIAL_CENTER = DIAL_SIZE / 2;
 const TICK_RADIUS = 36;
@@ -86,15 +86,17 @@ export function CompassHud({ left, top, active }: CompassHudProps) {
 
           const magneticNorthAngle = Math.atan2(y, x) * (180 / Math.PI);
           const rawHeading = normalizeDegrees(
-            90 - magneticNorthAngle + LANDSCAPE_HEADING_OFFSET
+            magneticNorthAngle + LANDSCAPE_HEADING_OFFSET
           );
-          const smoothedHeading = hasReadingRef.current
-            ? normalizeDegrees(
-              headingRef.current
-                + ((((rawHeading - headingRef.current + 540) % 360) - 180)
-                  * SMOOTHING_FACTOR)
-            )
-            : rawHeading;
+          
+          let smoothedHeading = rawHeading;
+          if (hasReadingRef.current) {
+            const normCurrent = normalizeDegrees(headingRef.current);
+            let delta = rawHeading - normCurrent;
+            if (delta > 180) delta -= 360;
+            if (delta < -180) delta += 360;
+            smoothedHeading = headingRef.current + delta * SMOOTHING_FACTOR;
+          }
 
           headingRef.current = smoothedHeading;
           setHeading(smoothedHeading);
@@ -114,7 +116,8 @@ export function CompassHud({ left, top, active }: CompassHudProps) {
     };
   }, [active, appIsActive]);
 
-  const roundedHeading = Math.round(heading) % 360;
+  const normalizedHeading = normalizeDegrees(heading);
+  const roundedHeading = Math.round(normalizedHeading) % 360;
   const showHeading = isAvailable && hasReading;
 
   return (
@@ -125,7 +128,7 @@ export function CompassHud({ left, top, active }: CompassHudProps) {
       accessibilityRole="image"
       accessibilityLabel={
         showHeading
-          ? `Brújula: ${getCardinalDirection(heading)}, ${roundedHeading} grados`
+          ? `Brújula: ${getCardinalDirection(normalizedHeading)}, ${roundedHeading} grados`
           : 'Brújula sin lectura disponible'
       }
     >
@@ -182,7 +185,7 @@ export function CompassHud({ left, top, active }: CompassHudProps) {
 
         <View style={styles.fixedMarker} />
         <View style={styles.readout}>
-          <Text style={styles.direction}>{showHeading ? getCardinalDirection(heading) : '—'}</Text>
+          <Text style={styles.direction}>{showHeading ? getCardinalDirection(normalizedHeading) : '—'}</Text>
           <Text style={styles.degrees}>{showHeading ? `${roundedHeading}°` : 'N/D'}</Text>
         </View>
       </View>
