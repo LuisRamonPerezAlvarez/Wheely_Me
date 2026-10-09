@@ -7,12 +7,12 @@ type CompassHudProps = {
   top: number;
 };
 
-const LANDSCAPE_HEADING_OFFSET = 90;
-const UPDATE_INTERVAL_MS = 100;
-const SMOOTHING_FACTOR = 0.25;
+const LANDSCAPE_HEADING_OFFSET = -90;
+const UPDATE_INTERVAL_MS = 32;
+const SMOOTHING_FACTOR = 0.3;
 
 function normalizeDegrees(value: number) {
-  return (value + 360) % 360;
+  return ((value % 360) + 360) % 360;
 }
 
 function getCardinalDirection(heading: number) {
@@ -48,10 +48,13 @@ export function CompassHud({ left, top }: CompassHudProps) {
           const rawHeading = normalizeDegrees(
             90 - magneticNorthAngle + LANDSCAPE_HEADING_OFFSET
           );
-          const shortestDelta = ((rawHeading - headingRef.current + 540) % 360) - 180;
-          const smoothedHeading = normalizeDegrees(
-            headingRef.current + shortestDelta * SMOOTHING_FACTOR
-          );
+          
+          const normCurrent = normalizeDegrees(headingRef.current);
+          let delta = rawHeading - normCurrent;
+          if (delta > 180) delta -= 360;
+          if (delta < -180) delta += 360;
+
+          const smoothedHeading = headingRef.current + delta * SMOOTHING_FACTOR;
 
           headingRef.current = smoothedHeading;
           setHeading(smoothedHeading);
@@ -67,7 +70,8 @@ export function CompassHud({ left, top }: CompassHudProps) {
     };
   }, []);
 
-  const roundedHeading = Math.round(heading) % 360;
+  const normalizedHeading = normalizeDegrees(heading);
+  const roundedHeading = Math.round(normalizedHeading) % 360;
 
   return (
     <View
@@ -75,7 +79,7 @@ export function CompassHud({ left, top }: CompassHudProps) {
       style={[styles.container, { left, top }]}
       accessibilityLabel={
         isAvailable
-          ? `Brújula: ${getCardinalDirection(heading)}, ${roundedHeading} grados`
+          ? `Brújula: ${getCardinalDirection(normalizedHeading)}, ${roundedHeading} grados`
           : 'Brújula no disponible'
       }
     >
@@ -87,7 +91,7 @@ export function CompassHud({ left, top }: CompassHudProps) {
         <Text style={[styles.cardinal, styles.west, { transform: [{ rotate: `${heading}deg` }] }]}>O</Text>
       </View>
       <View style={styles.readout}>
-        <Text style={styles.direction}>{isAvailable ? getCardinalDirection(heading) : '—'}</Text>
+        <Text style={styles.direction}>{isAvailable ? getCardinalDirection(normalizedHeading) : '—'}</Text>
         <Text style={styles.degrees}>{isAvailable ? `${roundedHeading}°` : 'N/D'}</Text>
       </View>
     </View>
